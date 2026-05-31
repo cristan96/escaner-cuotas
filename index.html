@@ -80,22 +80,22 @@
 
     <div class="grid g2" style="margin-bottom:14px">
       <div>
-        <label>URL backend / proxy (modo web — recomendado)</label>
-        <input type="text" id="backendUrl" value="/api/odds" placeholder="/api/odds   (en Vercel, mismo dominio)" autocomplete="off" />
-        <div class="hint">En Vercel basta con <code>/api/odds</code>. Si la rellenas, la API key vive en el servidor y <b>no</b> hace falta pegarla abajo. Si la dejas vacía, se usa el modo directo (key en el navegador).</div>
+        <label>URL backend / proxy (opcional — déjalo vacío)</label>
+        <input type="text" id="backendUrl" placeholder="vacío = modo directo (te pide la API key)" autocomplete="off" />
+        <div class="hint">Vacío = <b>modo directo</b>: la app te pide la API key y llama directo a the-odds-api.com. Recomendado para tu caso, ya que la key va rotando.</div>
       </div>
       <div>
-        <label>App token (opcional, si activaste APP_TOKEN en el backend)</label>
-        <input type="password" id="appToken" placeholder="solo si protegiste el proxy" autocomplete="off" />
-        <div class="hint">Se envía como header <code>x-app-token</code> al proxy para evitar que terceros gasten tu cuota.</div>
+        <label>App token (opcional)</label>
+        <input type="password" id="appToken" placeholder="solo si usas un proxy con APP_TOKEN" autocomplete="off" />
+        <div class="hint">Solo aplica si configuraste un proxy propio. En modo directo, déjalo vacío.</div>
       </div>
     </div>
 
     <div class="grid g2">
       <div>
-        <label>API key de The Odds API (solo modo directo)</label>
-        <input type="password" id="apiKey" placeholder="pega aquí tu apiKey (no necesaria si usas backend)" autocomplete="off" />
-        <div class="hint">En modo directo se usa solo en tu navegador; no se envía a ningún servidor salvo a the-odds-api.com. <input type="checkbox" id="remember" style="width:auto"> recordar en este equipo</div>
+        <label>API key de The Odds API *</label>
+        <input type="password" id="apiKey" placeholder="pega aquí tu apiKey" autocomplete="off" />
+        <div class="hint">Se te pide en cada ejecución (tu key va rotando). Se usa solo en tu navegador y llama directo a the-odds-api.com. <input type="checkbox" id="remember" style="width:auto"> recordar en este equipo</div>
       </div>
       <div>
         <label>Regiones (casas de apuestas)</label>

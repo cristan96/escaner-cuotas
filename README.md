@@ -1,28 +1,34 @@
 # Escáner de Cuotas · Value Picks
 
-App web que escanea cuotas de The Odds API, construye un consenso de mercado
-libre de margen (de-vig) y detecta value picks (EV+). Frontend estático + una
-función serverless que oculta la API key. **No usa Claude ni IA en ejecución.**
+App web (una sola página estática) que escanea cuotas de The Odds API, construye
+un consenso de mercado libre de margen (de-vig) y detecta value picks (EV+).
+Toda la lógica de cálculo corre en el navegador con JavaScript puro. **No usa
+Claude ni ninguna IA.**
+
+## Modo de funcionamiento
+**Directo**: la app te pide tu API key de The Odds API en cada ejecución (pensado
+para una key que va rotando). El navegador llama directamente a `the-odds-api.com`
+(esa API permite CORS, así que no hace falta backend). La key se usa solo en tu
+navegador; no se guarda en ningún servidor.
 
 ## Estructura
 ```
 escaner-cuotas/
-├─ index.html              # frontend (toda la lógica de cálculo, JS puro)
-└─ api/
-   └─ odds/
-      └─ [...path].js       # proxy a The Odds API (añade la key secreta)
+└─ index.html     # toda la app (UI + lógica)
 ```
 
 ## Desplegar en Vercel (gratis)
-1. `vercel`  →  `vercel --prod`   (o importa esta carpeta como repo en vercel.com)
-2. En Vercel → Settings → Environment Variables:
-   - `ODDS_API_KEY` = tu key de The Odds API
-   - (opcional) `APP_TOKEN` = cadena secreta; si la pones, escríbela también en la app.
-   - Redeploy para aplicar.
-3. Abre `https://TU-APP.vercel.app/`. El campo backend ya viene con `/api/odds`.
-   Pulsa **Comenzar escaneo**.
+Es solo HTML estático, sin variables de entorno ni funciones:
+1. `vercel`  →  `vercel --prod`   (o importa el repo en vercel.com → Deploy)
+2. Abre `https://TU-APP.vercel.app/`, pega tu API key y pulsa **Comenzar escaneo**.
 
-Prueba del backend: `https://TU-APP.vercel.app/api/odds/sports/` debe devolver JSON.
+## Uso local
+Abre `index.html` con doble clic, pega tu API key y escanea. Funciona igual que en la web.
 
-## Uso local (sin backend)
-Abre `index.html`, borra el campo "URL backend", pega tu API key y escanea.
+## Parámetros ajustables en la UI
+- UMBRAL_EV, Tope EV (anti-error de línea), Prob. mínima, Kelly, bankroll.
+- Regiones (eu/uk/us…), mercados (h2h/spreads/totals), Pinnacle ×2, solo-hoy.
+- Máx. llamadas /odds (control de consumo de cuota).
+
+Al terminar muestra los picks (ordenados por probabilidad), el motivo de cada
+nivel de confianza, y los créditos consumidos / restantes de tu cuota.
