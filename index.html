@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Escáner de Cuotas · Value Picks v1.1</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131825; --panel2:#1a2030; --border:#262d40;
+    --txt:#e6e9f0; --muted:#8a93a6; --accent:#3da9fc; --accent2:#2bd4a4;
+    --warn:#f5a623; --bad:#ff5470; --good:#2bd4a4; --mid:#f5a623; --low:#ff5470;
+    --chip:#202840;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.45}
+  header{padding:18px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header .tag{font-size:11px;color:var(--muted);border:1px solid var(--border);padding:2px 8px;border-radius:20px}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 24px 60px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+  .card h2{font-size:14px;margin:0 0 14px;font-weight:600;color:var(--txt);letter-spacing:.3px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+  input,select{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--txt);border-radius:8px;padding:9px 11px;font-size:13px;outline:none}
+  input:focus,select:focus{border-color:var(--accent)}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:760px){.g2,.g3,.g4{grid-template-columns:1fr}}
+  .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .btn{background:var(--accent);color:#04121f;border:none;border-radius:9px;padding:11px 22px;font-size:14px;font-weight:700;cursor:pointer;transition:.15s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--border)}
+  .checkline{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+  .checkline input{width:auto}
+  .hint{font-size:11px;color:var(--muted);margin-top:6px}
+  #log{background:#080a10;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;max-height:230px;overflow:auto;white-space:pre-wrap;color:#aeb6c8}
+  .log-ok{color:var(--good)} .log-warn{color:var(--warn)} .log-err{color:var(--bad)} .log-dim{color:#5b6e8c}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--border);vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:var(--panel)}
+  tr:hover td{background:var(--panel2)}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .pos{color:var(--good);font-weight:700}
+  .chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700}
+  .c-ALTA{background:rgba(43,212,164,.15);color:var(--good)}
+  .c-MEDIA{background:rgba(245,166,35,.15);color:var(--mid)}
+  .c-BAJA{background:rgba(255,84,112,.15);color:var(--low)}
+  .confwhy{color:var(--muted);font-size:10.5px;margin-top:4px;line-height:1.3}
+  .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .stat{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .stat b{display:block;font-size:22px;font-weight:700}
+  .stat span{font-size:11px;color:var(--muted)}
+  .omit{font-size:12px;color:var(--muted);margin-top:10px}
+  .omit span{display:inline-block;background:var(--chip);padding:2px 8px;border-radius:6px;margin:3px 4px 0 0}
+  .hidden{display:none}
+  .bar{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-top:8px}
+  .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+  details{margin-top:10px}
+  summary{cursor:pointer;color:var(--accent);font-size:12px}
+  a{color:var(--accent)}
+  .ev-bad{color:var(--muted)}
+  .disclaimer{font-size:11px;color:var(--muted);border-top:1px solid var(--border);padding-top:14px;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 Escáner de Cuotas · Detección de Value Picks</h1>
+  <span class="tag">v1.1</span>
+  <span class="tag">The Odds API v4</span>
+  <span class="tag" id="quotaTag">cuota: —</span>
+</header>
+
+<div class="wrap">
+
+  <!-- ====== CONFIG ====== -->
+  <div class="card" id="configCard">
+    <h2>1 · Configuración</h2>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div>
+        <label>URL backend / proxy (modo web — recomendado)</label>
+        <input type="text" id="backendUrl" value="/api/odds" placeholder="/api/odds   (en Vercel, mismo dominio)" autocomplete="off" />
+        <div class="hint">En Vercel basta con <code>/api/odds</code>. Si la rellenas, la API key vive en el servidor y <b>no</b> hace falta pegarla abajo. Si la dejas vacía, se usa el modo directo (key en el navegador).</div>
+      </div>
+      <div>
+        <label>App token (opcional, si activaste APP_TOKEN en el backend)</label>
+        <input type="password" id="appToken" placeholder="solo si protegiste el proxy" autocomplete="off" />
+        <div class="hint">Se envía como header <code>x-app-token</code> al proxy para evitar que terceros gasten tu cuota.</div>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div>
+        <label>API key de The Odds API (solo modo directo)</label>
+        <input type="password" id="apiKey" placeholder="pega aquí tu apiKey (no necesaria si usas backend)" autocomplete="off" />
+        <div class="hint">En modo directo se usa solo en tu navegador; no se envía a ningún servidor salvo a the-odds-api.com. <input type="checkbox" id="remember" style="width:auto"> recordar en este equipo</div>
+      </div>
+      <div>
+        <label>Regiones (casas de apuestas)</label>
+        <select id="regions">
+          <option value="eu,uk" selected>eu,uk (default)</option>
+          <option value="eu,uk,us">eu,uk,us (más casas, más cuota)</option>
+          <option value="eu">eu</option>
+          <option value="uk">uk</option>
+          <option value="us">us</option>
+          <option value="eu,uk,us,au">eu,uk,us,au (máx.)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid g4" style="margin-top:14px">
+      <div><label>UMBRAL_EV (% mínimo)</label><input type="number" id="umbralEV" value="2.0" step="0.5"></div>
+      <div><label>Tope EV % (descarta errores de línea)</label><input type="number" id="maxEV" value="50" step="5" min="5"></div>
+      <div><label>KELLY_FRACCION</label><input type="number" id="kelly" value="0.25" step="0.05" min="0" max="1"></div>
+      <div><label>Bankroll (para stake)</label><input type="number" id="bankroll" value="1000" step="50"></div>
+    </div>
+    <div class="grid g4" style="margin-top:14px">
+      <div><label>Prob. mínima % (solo picks ≥)</label><input type="number" id="minProb" value="60" step="5" min="0" max="100"></div>
+      <div><label>Máx. llamadas /odds (control de cuota)</label><input type="number" id="maxCalls" value="30" step="5" min="1"></div>
+    </div>
+
+    <div class="grid g3" style="margin-top:14px">
+      <div>
+        <label>Mercados featured</label>
+        <div style="display:flex;gap:14px;padding-top:6px">
+          <span class="checkline"><input type="checkbox" id="m_h2h" checked> h2h</span>
+          <span class="checkline"><input type="checkbox" id="m_spreads" checked> spreads</span>
+          <span class="checkline"><input type="checkbox" id="m_totals" checked> totals</span>
+        </div>
+      </div>
+      <div>
+        <label>Opciones</label>
+        <div style="display:flex;gap:14px;padding-top:6px;flex-wrap:wrap">
+          <span class="checkline"><input type="checkbox" id="ponderarSharp" checked> Pinnacle ×2</span>
+          <span class="checkline"><input type="checkbox" id="onlyToday" checked> solo HOY (UTC-5)</span>
+        </div>
+      </div>
+      <div>
+        <label>Deportes objetivo</label>
+        <div class="hint" style="margin-top:6px">Soccer · Baseball · Tennis · Ice Hockey · American Football · Basketball (se leen dinámicos y activos desde /sports)</div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <button class="btn" id="startBtn">▶ Comenzar escaneo</button>
+      <button class="btn ghost" id="resetBtn">Limpiar</button>
+      <span class="hint" id="status"></span>
+    </div>
+    <div class="bar"><i id="progBar"></i></div>
+  </div>
+
+  <!-- ====== LOG ====== -->
+  <div class="card" id="logCard">
+    <h2>2 · Registro de ejecución</h2>
+    <div id="log">Listo. Introduce tu API key y pulsa «Comenzar».</div>
+  </div>
+
+  <!-- ====== RESULTS ====== -->
+  <div class="card hidden" id="resultsCard">
+    <h2>3 · Value Picks (orden Prob % ↓)</h2>
+    <div class="summary" id="summary"></div>
+    <div style="overflow:auto">
+      <table id="picksTable">
+        <thead><tr>
+          <th>Deporte / Liga</th><th>Partido (hora local)</th><th>Mercado / Línea</th>
+          <th>Selección</th><th>Mejor cuota (casa)</th><th class="num">Prob %</th>
+          <th class="num">Cuota justa</th><th class="num">EV%</th><th class="num">Edge%</th>
+          <th>Confianza · Motivo</th><th class="num">Stake</th>
+        </tr></thead>
+        <tbody id="picksBody"></tbody>
+      </table>
+    </div>
+    <div class="omit" id="omitBox"></div>
+    <div class="disclaimer">Una cuota con value indica una ventaja estadística a largo plazo, no una predicción del resultado de un partido concreto. La columna Prob % es el consenso de mercado libre de margen (de-vig). Gestiona el bankroll con disciplina.</div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   ESCÁNER DE CUOTAS · VALUE PICKS v1.1
+   Implementa Fases 0–5 client-side contra The Odds API v4.
+   ============================================================ */
+
+const DIRECT_BASE = "https://api.the-odds-api.com/v4";
+let API_BASE = DIRECT_BASE;   // se reasigna al backend (proxy) si se configura
+let REQ_HEADERS = {};         // headers extra (p.ej. x-app-token en modo backend)
+const TZ = "America/Guayaquil"; // UTC-5
+const TARGET_GROUPS = new Set([
+  "Soccer","Baseball","Tennis","Ice Hockey","American Football","Basketball"
+]);
+// Prioridad de escaneo (las ligas/deportes "core" primero para no malgastar el cupo de llamadas)
+const PRIORITY = [
+  "baseball_mlb","basketball_nba","americanfootball_nfl","icehockey_nhl",
+  "soccer_epl","soccer_spain_la_liga","soccer_italy_serie_a","soccer_germany_bundesliga",
+  "soccer_france_ligue_one","soccer_uefa_champs_league","soccer_uefa_europa_league"
+];
+
+// ---------- elementos ----------
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+
+// ---------- almacenamiento seguro (file:// puede lanzar SecurityError) ----------
+const safeStore = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+
+// ---------- persistencia de la key ----------
+window.addEventListener("DOMContentLoaded",()=>{
+  const k = safeStore.get("oddsApiKey");
+  if(k){ $("apiKey").value = k; $("remember").checked = true; }
+});
+
+// ---------- log helpers ----------
+function clearLog(){ logEl.textContent=""; }
+function log(msg,cls){ const s=document.createElement("span"); if(cls)s.className=cls; s.textContent=msg+"\n"; logEl.appendChild(s); logEl.scrollTop=logEl.scrollHeight; }
+function setStatus(t){ $("status").textContent=t; }
+function setProg(p){ $("progBar").style.width=Math.max(0,Math.min(100,p))+"%"; }
+
+// ---------- fecha "hoy" en UTC-5 ----------
+function ymdInTZ(date){
+  const f=new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit"});
+  return f.format(date); // YYYY-MM-DD
+}
+function localTimeStr(iso){
+  const d=new Date(iso);
+  return new Intl.DateTimeFormat("es-EC",{timeZone:TZ,hour:"2-digit",minute:"2-digit",hour12:false}).format(d)+" h";
+}
+const TODAY = ymdInTZ(new Date());
+
+// ---------- estado de cuota (headers de The Odds API) ----------
+let lastRemaining=null, lastUsed=null, lastCost=null;
+
+// ---------- fetch con manejo de cuota ----------
+async function apiGet(path){
+  const res = await fetch(API_BASE+path, {headers:REQ_HEADERS});
+  const rem = res.headers.get("x-requests-remaining");
+  const used = res.headers.get("x-requests-used");
+  const cost = res.headers.get("x-requests-last");
+  if(rem!==null){ lastRemaining=Number(rem); $("quotaTag").textContent=`cuota: ${rem} rest. / ${used??"?"} usadas`; }
+  if(used!==null) lastUsed=Number(used);
+  if(cost!==null) lastCost=Number(cost);
+  if(!res.ok){
+    let detail=""; try{ const j=await res.json(); detail=j.message||JSON.stringify(j);}catch(e){ detail=res.statusText; }
+    throw new Error(`HTTP ${res.status} — ${detail}`);
+  }
+  return res.json();
+}
+
+// ============================================================
+//  DE-VIG / CONSENSO  (Fase 2)
+// ============================================================
+// Agrupa los outcomes de un mercado de una casa en grupos complementarios (suman ~100%).
+function groupOutcomes(market){
+  const groups=[];
+  if(market.key==="h2h"){
+    groups.push({lineId:"", outcomes:market.outcomes});
+  } else if(market.key==="totals"){
+    const byPoint={};
+    for(const o of market.outcomes){
+      const p=String(o.point);
+      (byPoint[p]=byPoint[p]||[]).push(o);
+    }
+    for(const p in byPoint) groups.push({lineId:p, outcomes:byPoint[p]});
+  } else if(market.key==="spreads"){
+    const byAbs={};
+    for(const o of market.outcomes){
+      const p=Math.abs(o.point).toFixed(2);
+      (byAbs[p]=byAbs[p]||[]).push(o);
+    }
+    for(const p in byAbs) groups.push({lineId:p, outcomes:byAbs[p]});
+  }
+  return groups;
+}
+
+function selectionLabel(marketKey,o){
+  if(marketKey==="h2h") return o.name;
+  if(marketKey==="totals") return `${o.name} ${o.point}`;
+  if(marketKey==="spreads") return `${o.name} ${o.point>0?"+":""}${o.point}`;
+  return o.name;
+}
+function marketLabel(marketKey,lineId){
+  if(marketKey==="h2h") return "1X2 / Moneyline";
+  if(marketKey==="totals") return `Totales · línea ${lineId}`;
+  if(marketKey==="spreads") return `Hándicap · línea ±${lineId}`;
+  return marketKey;
+}
+
+// media + desviación
+function stats(arr){
+  const n=arr.length, mean=arr.reduce((a,b)=>a+b,0)/n;
+  const variance=arr.reduce((a,b)=>a+(b-mean)**2,0)/n;
+  return {mean,std:Math.sqrt(variance),n};
+}
+function median(arr){
+  const a=arr.slice().sort((x,y)=>x-y), m=Math.floor(a.length/2);
+  return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+}
+// MAD escalada (robusta a valores extremos como cuotas centinela 1001)
+function madInfo(arr){
+  const med=median(arr);
+  const mad=median(arr.map(x=>Math.abs(x-med)))*1.4826;
+  return {med,mad};
+}
+
+// Procesa un evento → devuelve array de selecciones con consenso, mejor cuota, EV, etc.
+function processEvent(ev, cfg){
+  // mapa: selKey -> { meta, books:[{book,odds,fairProb}] }
+  const sel={};
+  for(const bm of ev.bookmakers){
+    for(const mk of bm.markets){
+      if(!cfg.markets.includes(mk.key)) continue;
+      for(const g of groupOutcomes(mk)){
+        const sumImplied=g.outcomes.reduce((a,o)=>a+1/o.price,0);
+        // Una cuota centinela (mercado suspendido, p.ej. 1001) hunde la suma de prob.
+        // implícitas muy por debajo de 1 (~0.5-0.6) y distorsiona TODO el de-vig de esa
+        // casa en el grupo. Una línea simplemente blanda (value real) baja la suma solo a
+        // ~0.92-0.99, así que NO la tocamos. Umbral 0.92 separa error de value legítimo.
+        if(!isFinite(sumImplied) || sumImplied<0.92 || sumImplied>1.40) continue;
+        for(const o of g.outcomes){
+          const fairProb=(1/o.price)/sumImplied;
+          const key=`${mk.key}|${g.lineId}|${o.name}|${o.point??""}`;
+          if(!sel[key]) sel[key]={
+            marketKey:mk.key, lineId:g.lineId,
+            mercado:marketLabel(mk.key,g.lineId),
+            seleccion:selectionLabel(mk.key,o),
+            books:[]
+          };
+          sel[key].books.push({book:bm.title, odds:o.price, fairProb});
+        }
+      }
+    }
+  }
+
+  const out=[];
+  for(const key in sel){
+    const s=sel[key];
+    let books=s.books.slice();
+    if(books.length<1) continue;
+
+    const nBooks=s.books.length;
+
+    // --- Fase 4: exclusión SOLO de cuotas imposibles (errores de línea / centinelas) ---
+    // No excluimos líneas blandas legítimas (una cuota 10-20% mejor que el consenso ES el value
+    // que buscamos). Solo descartamos precios absurdos relativos a la mediana del mercado:
+    // una casa que valora este resultado a <30% (o >330%) de la prob. mediana está suspendida/errónea.
+    let excluded=[];
+    if(books.length>=4){
+      const med=median(books.map(b=>b.fairProb));
+      const lo=cfg.floorRatio*med, hi=med/cfg.floorRatio;
+      const kept=books.filter(b=>b.fairProb>=lo && b.fairProb<=hi);
+      const ex=books.filter(b=>!(b.fairProb>=lo && b.fairProb<=hi));
+      if(kept.length>=3){ books=kept; excluded=ex; } // nunca vaciar el grupo
+    }
+
+    // --- consenso ponderado (Pinnacle ×2), solo casas válidas ---
+    let wSum=0, pSum=0;
+    for(const b of books){
+      const w=(cfg.ponderarSharp && /pinnacle/i.test(b.book))?2:1;
+      wSum+=w; pSum+=w*b.fairProb;
+    }
+    const consensus=pSum/wSum;
+    const fairOdds=1/consensus;
+
+    // --- mejor cuota: SOLO entre casas válidas (no las descartadas por error de línea) ---
+    let best=books[0];
+    for(const b of books) if(b.odds>best.odds) best=b;
+    // ¿había una cuota más alta en una casa descartada? → bandera de error de línea
+    let bestAll=s.books[0];
+    for(const b of s.books) if(b.odds>bestAll.odds) bestAll=b;
+    const lineErrorFlag = bestAll.odds>best.odds*1.5; // alguien cotiza muy por encima → sospechoso
+
+    // --- Fase 3: EV y Edge ---
+    const EV=(best.odds*consensus-1)*100;
+    const Edge=(best.odds/fairOdds-1)*100;
+
+    // --- Fase 4: confianza + motivo ---
+    const probsKept=books.map(b=>b.fairProb);
+    const disp=stats(probsKept);
+    const cv = disp.mean>0 ? disp.std/disp.mean : 1; // coef. de variación
+    const dispPct=(cv*100).toFixed(1);
+    const nExcl=excluded.length;
+    let conf;
+    if(nBooks<5) conf="BAJA";
+    else if(nBooks>=7 && cv<0.07 && EV<25) conf="ALTA";
+    else conf="MEDIA";
+    if(lineErrorFlag && conf==="ALTA") conf="MEDIA"; // cautela: mercado disperso
+    if(EV>cfg.maxEV) conf="BAJA"; // EV exagerado ⇒ casi siempre error de línea
+
+    // motivo legible de la confianza asignada
+    let confReason;
+    if(EV>cfg.maxEV){
+      confReason=`EV de ${EV.toFixed(0)}% excede el tope: casi seguro error de línea.`;
+    } else if(conf==="BAJA"){
+      const r=[];
+      if(nBooks<5) r.push(`solo ${nBooks} casa(s) cotizan esta línea (<5 ⇒ ruidoso)`);
+      if(cv>=0.12) r.push(`dispersión alta entre casas (${dispPct}%)`);
+      if(lineErrorFlag) r.push(`una casa cotiza muy por encima del resto`);
+      confReason=(r.length?r.join("; "):`consenso poco fiable`)+".";
+    } else if(conf==="ALTA"){
+      confReason=`${nBooks} casas, baja dispersión (${dispPct}%) y EV contenido${nExcl?`; ${nExcl} outlier(s) excluido(s)`:""}.`;
+    } else { // MEDIA
+      const r=[];
+      if(nBooks<7) r.push(`${nBooks} casas (consenso medio)`);
+      if(cv>=0.07) r.push(`dispersión moderada (${dispPct}%)`);
+      if(EV>=25) r.push(`EV alto (${EV.toFixed(0)}%) a vigilar`);
+      if(lineErrorFlag) r.push(`una casa muy por encima del resto`);
+      if(nExcl) r.push(`${nExcl} outlier(s) excluido(s) del consenso`);
+      confReason=(r.length?r.join("; "):`consenso aceptable`)+".";
+    }
+
+    // --- Stake Kelly fraccionado ---
+    let kellyFull=(best.odds*consensus-1)/(best.odds-1);
+    if(!isFinite(kellyFull)||kellyFull<0) kellyFull=0;
+    const stakePct=cfg.kelly*kellyFull*100;
+    const stakeAmt=cfg.bankroll*cfg.kelly*kellyFull;
+
+    out.push({
+      sport:ev._sportTitle, league:ev._leagueTitle,
+      match:`${ev.home_team??ev._t1} vs ${ev.away_team??ev._t2}`,
+      time:localTimeStr(ev.commence_time),
+      mercado:s.mercado, seleccion:s.seleccion,
+      bestOdds:best.odds, bestBook:best.book,
+      prob:consensus*100, fairOdds, EV, Edge, conf, confReason,
+      nBooks, stakePct, stakeAmt
+    });
+  }
+  return out;
+}
+
+// ============================================================
+//  FLUJO PRINCIPAL  (Fases 0–5)
+// ============================================================
+async function run(){
+  // --- Modo de acceso a datos ---
+  // BACKEND: se rellena "URL backend (proxy)" → la key vive en el servidor (web pública).
+  // DIRECTO: sin backend → la key se pega en el navegador (uso local/personal).
+  const backend=$("backendUrl").value.trim().replace(/\/+$/,"");
+  const appToken=$("appToken").value.trim();
+  const key=$("apiKey").value.trim();
+
+  if(backend){
+    API_BASE=backend;
+    REQ_HEADERS = appToken ? {"x-app-token":appToken} : {};
+  } else {
+    if(!key){ alert("Falta la API key (o configura una URL de backend)."); return; }
+    API_BASE=DIRECT_BASE;
+    REQ_HEADERS={};
+  }
+  if($("remember").checked && key) safeStore.set("oddsApiKey",key); else safeStore.del("oddsApiKey");
+
+  const markets=[];
+  if($("m_h2h").checked)markets.push("h2h");
+  if($("m_spreads").checked)markets.push("spreads");
+  if($("m_totals").checked)markets.push("totals");
+  if(markets.length===0){ alert("Selecciona al menos un mercado."); return; }
+
+  const cfg={
+    key,
+    regions:$("regions").value,
+    markets,
+    umbralEV:parseFloat($("umbralEV").value)||2.0,
+    maxEV:parseFloat($("maxEV").value)||50,
+    minProb:parseFloat($("minProb").value)||0,
+    floorRatio:0.30,   // casa con prob < 30% (o > 333%) de la mediana = línea errónea
+    kelly:parseFloat($("kelly").value)||0.25,
+    bankroll:parseFloat($("bankroll").value)||1000,
+    maxCalls:parseInt($("maxCalls").value)||30,
+    ponderarSharp:$("ponderarSharp").checked,
+    onlyToday:$("onlyToday").checked
+  };
+
+  $("startBtn").disabled=true; $("resetBtn").disabled=true;
+  $("resultsCard").classList.add("hidden");
+  clearLog(); setProg(2);
+  log(backend ? `Modo BACKEND (proxy): la key vive en el servidor.` : `Modo DIRECTO: key en el navegador.`,"log-dim");
+  const km = backend ? `` : `apiKey=${cfg.key}`;
+  const omitted=[]; let allPicks=[]; let nEvents=0; let scanned=[];
+
+  try{
+    // ---- FASE 0: descubrimiento (gratis) ----
+    log(`Hoy (UTC-5): ${TODAY}`,"log-dim");
+    log("FASE 0 · GET /sports (sin coste de cuota)…");
+    const sports=await apiGet(`/sports/?${km}`);
+    const startUsed=lastUsed; // "usadas" antes de las llamadas de pago (/sports es gratis)
+    let active=sports.filter(s=>TARGET_GROUPS.has(s.group) && s.active && !s.has_outrights);
+    log(`  ${active.length} ligas/deportes activos en grupos objetivo.`,"log-ok");
+
+    // grupos sin actividad
+    for(const g of TARGET_GROUPS){
+      if(!active.some(s=>s.group===g)){ omitted.push(`${g}: sin actividad en temporada`); }
+    }
+
+    // ordenar por prioridad y aplicar tope de llamadas
+    active.sort((a,b)=>{
+      const ia=PRIORITY.indexOf(a.key), ib=PRIORITY.indexOf(b.key);
+      return (ia<0?999:ia)-(ib<0?999:ib);
+    });
+    if(active.length>cfg.maxCalls){
+      const cut=active.slice(cfg.maxCalls);
+      cut.forEach(s=>omitted.push(`${s.title}: omitido por tope de ${cfg.maxCalls} llamadas`));
+      active=active.slice(0,cfg.maxCalls);
+      log(`  ⚠ Limitado a ${cfg.maxCalls} llamadas /odds (control de cuota). ${cut.length} ligas en cola se omiten.`,"log-warn");
+    }
+
+    // ---- FASE 1: cuotas por deporte ----
+    log(`FASE 1 · /odds por deporte (${cfg.markets.join(",")} · regiones ${cfg.regions})…`);
+    let i=0;
+    for(const sp of active){
+      i++; setProg(10+ (i/active.length)*70); setStatus(`${i}/${active.length} · ${sp.title}`);
+      let data;
+      try{
+        data=await apiGet(`/sports/${sp.key}/odds/?${km}&regions=${cfg.regions}&markets=${cfg.markets.join(",")}&oddsFormat=decimal`);
+      }catch(e){
+        log(`  ✗ ${sp.title}: ${e.message}`,"log-err"); omitted.push(`${sp.title}: error API`); continue;
+      }
+      // Fase 1.2: filtrar por HOY (UTC-5)
+      let events = cfg.onlyToday ? data.filter(ev=>ymdInTZ(new Date(ev.commence_time))===TODAY) : data;
+      if(events.length===0){
+        log(`  – ${sp.title}: sin partidos hoy → descartado.`,"log-dim");
+        omitted.push(`${sp.title}: sin partidos hoy`); continue;
+      }
+      scanned.push(`${sp.title} (${events.length})`);
+      log(`  ✓ ${sp.title}: ${events.length} partido(s) hoy.`,"log-ok");
+      // Fase 2-3 por evento
+      for(const ev of events){
+        ev._sportTitle=sp.group; ev._leagueTitle=sp.title;
+        nEvents++;
+        const picks=processEvent(ev,cfg).filter(p=>p.EV>=cfg.umbralEV && p.EV<=cfg.maxEV && p.prob>=cfg.minProb && isFinite(p.EV));
+        allPicks=allPicks.concat(picks);
+      }
+    }
+
+    setProg(90); log("FASE 2-4 · de-vig, value y confianza calculados.","log-ok");
+
+    // ---- consumo de cuota de este escaneo ----
+    const consumed=(lastUsed!=null && startUsed!=null) ? lastUsed-startUsed : null;
+    const credits={consumed, remaining:lastRemaining, used:lastUsed};
+
+    // ---- FASE 5: salida ----
+    allPicks.sort((a,b)=>b.prob-a.prob);
+    renderResults(allPicks, {scanned,omitted,nEvents,nPicks:allPicks.length,credits});
+    setProg(100); setStatus("Completado.");
+    log(`FASE 5 · ${allPicks.length} value pick(s) sobre ${nEvents} partido(s).`,"log-ok");
+    if(consumed!=null) log(`Créditos consumidos en este escaneo: ${consumed} · Restantes: ${lastRemaining??"?"}.`,"log-ok");
+
+  }catch(e){
+    log("ERROR: "+e.message,"log-err");
+    if(/Failed to fetch|NetworkError|CORS/i.test(e.message))
+      log("  ↳ Posible bloqueo CORS o key inválida. Verifica la API key y la conexión.","log-warn");
+    setStatus("Error.");
+  }finally{
+    $("startBtn").disabled=false; $("resetBtn").disabled=false;
+  }
+}
+
+// ---------- render Fase 5 ----------
+function renderResults(picks, meta){
+  $("resultsCard").classList.remove("hidden");
+
+  const cr=meta.credits||{};
+  const crConsumed = cr.consumed!=null ? cr.consumed : "—";
+  const crRemaining = cr.remaining!=null ? cr.remaining : "—";
+  $("summary").innerHTML = `
+    <div class="stat"><b>${meta.nPicks}</b><span>Value picks</span></div>
+    <div class="stat"><b>${meta.nEvents}</b><span>Partidos analizados</span></div>
+    <div class="stat"><b>${meta.scanned.length}</b><span>Ligas con partidos hoy</span></div>
+    <div class="stat"><b>${meta.omitted.length}</b><span>Deportes/ligas omitidos</span></div>
+    <div class="stat"><b>${crConsumed}</b><span>Créditos consumidos</span></div>
+    <div class="stat"><b>${crRemaining}</b><span>Créditos restantes</span></div>`;
+
+  const tb=$("picksBody"); tb.innerHTML="";
+  if(picks.length===0){
+    tb.innerHTML=`<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Sin value picks que cumplan los filtros (EV ≥ ${$("umbralEV").value}% y Prob ≥ ${$("minProb").value}%) en los partidos de hoy.</td></tr>`;
+  }
+  for(const p of picks){
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td>${p.sport}<div style="color:var(--muted);font-size:11px">${p.league}</div></td>
+      <td>${p.match}<div style="color:var(--muted);font-size:11px">${p.time}</div></td>
+      <td>${p.mercado}</td>
+      <td><b>${p.seleccion}</b></td>
+      <td>${p.bestOdds.toFixed(2)} <span style="color:var(--muted);font-size:11px">(${p.bestBook})</span></td>
+      <td class="num">${p.prob.toFixed(1)}%</td>
+      <td class="num">${p.fairOdds.toFixed(2)}</td>
+      <td class="num pos">+${p.EV.toFixed(2)}%</td>
+      <td class="num">${p.Edge.toFixed(2)}%</td>
+      <td style="max-width:230px"><span class="chip c-${p.conf}">${p.conf}</span><div class="confwhy" title="${p.confReason.replace(/"/g,'&quot;')}">${p.confReason}</div></td>
+      <td class="num">${p.stakePct.toFixed(2)}%<div style="color:var(--muted);font-size:11px">${p.stakeAmt.toFixed(2)}</div></td>`;
+    tb.appendChild(tr);
+  }
+
+  const ob=$("omitBox");
+  let html=`<b>Resumen de ejecución</b> · Escaneados: ${meta.scanned.join(", ")||"ninguno"}.`;
+  if(meta.omitted.length){
+    html+=`<div style="margin-top:8px"><b>Omitidos:</b><br>`+
+          meta.omitted.map(o=>`<span>${o}</span>`).join("")+`</div>`;
+  }
+  ob.innerHTML=html;
+}
+
+// ---------- eventos UI ----------
+$("startBtn").addEventListener("click",run);
+$("resetBtn").addEventListener("click",()=>{
+  clearLog(); logEl.textContent="Listo. Introduce tu API key y pulsa «Comenzar».";
+  $("resultsCard").classList.add("hidden"); setProg(0); setStatus("");
+});
+$("apiKey").addEventListener("keydown",e=>{ if(e.key==="Enter")run(); });
+</script>
+</body>
+</html>
