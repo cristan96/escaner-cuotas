@@ -53,6 +53,14 @@
   .tab.active{background:var(--accent);color:#04121f;border-color:var(--accent)}
   .res-sel{background:var(--panel2);border:1px solid var(--border);color:var(--txt);border-radius:6px;padding:4px 6px;font-size:12px}
   .pl-pos{color:var(--good);font-weight:700}.pl-neg{color:var(--bad);font-weight:700}
+  .adv-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+  @media(max-width:760px){.adv-grid{grid-template-columns:1fr}}
+  .subcard{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .subcard h3{margin:0 0 8px;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+  .mini{width:100%;border-collapse:collapse;font-size:12px}
+  .mini th,.mini td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:right}
+  .mini th:first-child,.mini td:first-child{text-align:left}
+  .mini th{color:var(--muted);font-size:10px;text-transform:uppercase}
   .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
   .stat{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
   .stat b{display:block;font-size:22px;font-weight:700}
@@ -200,15 +208,18 @@
     <div class="card">
       <h2>Historial de picks · estadísticas</h2>
       <div class="summary" id="histSummary"></div>
-      <div class="row" style="margin:6px 0 14px;align-items:flex-end">
+      <div id="histAdvanced" style="margin-bottom:16px"></div>
+      <div class="row" style="margin:6px 0 6px;align-items:flex-end">
         <div><label>Deporte</label><select id="histSport"><option value="">Todos</option></select></div>
         <div><label>Estado</label><select id="histResultFilter">
           <option value="">Todos</option><option value="pending">Pendientes</option>
           <option value="settled">Liquidadas</option><option value="won">Ganadas</option>
           <option value="lost">Perdidas</option><option value="void">Nulas</option></select></div>
+        <button class="btn" id="histSettleBtn">🔄 Auto-liquidar (resultados)</button>
         <button class="btn ghost" id="histExportBtn">Exportar CSV</button>
         <button class="btn ghost" id="histClearBtn">Vaciar historial</button>
       </div>
+      <div class="hint" id="histMsg" style="margin-bottom:12px"></div>
       <div style="overflow:auto">
         <table id="histTable">
           <thead><tr>
@@ -468,7 +479,8 @@ function processEvent(ev, cfg){
     const stakeAmt=cfg.bankroll*cfg.kelly*kellyFull;
 
     out.push({
-      sport:ev._sportTitle, league:ev._leagueTitle,
+      sport:ev._sportTitle, league:ev._leagueTitle, sportKey:ev._sportKey,
+      home:ev.home_team, away:ev.away_team,
       match:`${ev.home_team??ev._t1} vs ${ev.away_team??ev._t2}`,
       time:localTimeStr(ev.commence_time),
       mercado:s.mercado, seleccion:s.seleccion,
@@ -576,7 +588,7 @@ async function run(){
       log(`  ✓ ${sp.title}: ${events.length} partido(s) hoy.`,"log-ok");
       // Fase 2-3 por evento
       for(const ev of events){
-        ev._sportTitle=sp.group; ev._leagueTitle=sp.title;
+        ev._sportTitle=sp.group; ev._leagueTitle=sp.title; ev._sportKey=sp.key;
         nEvents++;
         const picks=processEvent(ev,cfg).filter(p=>p.EV>=cfg.umbralEV && p.EV<=cfg.maxEV && p.prob>=cfg.minProb && isFinite(p.EV));
         allPicks=allPicks.concat(picks);
@@ -673,7 +685,8 @@ function addPicksToHistory(){
     if(existing.has(key)) continue;
     h.push({ id:(Date.now().toString(36)+Math.random().toString(36).slice(2,7)),
       key, date, savedAt:new Date().toISOString(),
-      sport:p.sport, league:p.league, match:p.match, time:p.time,
+      sport:p.sport, league:p.league, sportKey:p.sportKey, home:p.home, away:p.away,
+      match:p.match, time:p.time,
       mercado:p.mercado, seleccion:p.seleccion, odds:+p.bestOdds.toFixed(2), book:p.bestBook,
       prob:+p.prob.toFixed(1), EV:+p.EV.toFixed(2), conf:p.conf, result:"pending" });
     added++; existing.add(key);
@@ -707,6 +720,8 @@ function renderHistory(){
     <div class="stat"><b>${hit.toFixed(1)}%</b><span>% Acierto (${won}-${lost})</span></div>
     <div class="stat"><b class="${profit>=0?'pl-pos':'pl-neg'}">${profit>=0?'+':''}${profit.toFixed(2)} u</b><span>Beneficio (1u plano)</span></div>
     <div class="stat"><b class="${yld>=0?'pl-pos':'pl-neg'}">${yld>=0?'+':''}${yld.toFixed(2)}%</b><span>Yield</span></div>`;
+
+  renderAdvanced(h);
 
   // tabla (aplicando filtros)
   let rows=h.slice().sort((a,b)=>(b.savedAt||"").localeCompare(a.savedAt||""));
@@ -746,6 +761,120 @@ function histExportCSV(){
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`historial_picks_${TODAY}.csv`; a.click();
 }
 
+// ----- métricas avanzadas: yield por deporte/confianza, racha y gráfico -----
+function renderAdvanced(h){
+  const box=$("histAdvanced");
+  const settled=h.filter(r=>r.result==="won"||r.result==="lost")
+                 .slice().sort((a,b)=>(a.savedAt||"").localeCompare(b.savedAt||""));
+  if(settled.length===0){ box.innerHTML=""; return; }
+
+  const agg=arr=>{ const n=arr.length, won=arr.filter(r=>r.result==="won").length,
+    profit=arr.reduce((a,r)=>a+pnl(r),0); return {n,won,lost:n-won,profit,
+    hit:n?won/n*100:0, yld:n?profit/n*100:0}; };
+  const groupBy=key=>{ const m={}; settled.forEach(r=>{ (m[r[key]]=m[r[key]]||[]).push(r); });
+    return Object.entries(m).map(([k,v])=>[k,agg(v)]).sort((a,b)=>b[1].n-a[1].n); };
+
+  const miniTable=(title,rows)=>`
+    <div class="subcard"><h3>${title}</h3><table class="mini">
+      <tr><th>${title.includes('deporte')?'Deporte':'Confianza'}</th><th>N</th><th>Acierto</th><th>P&amp;L</th><th>Yield</th></tr>
+      ${rows.map(([k,s])=>`<tr><td>${k}</td><td>${s.n}</td><td>${s.hit.toFixed(0)}%</td>
+        <td class="${s.profit>=0?'pl-pos':'pl-neg'}">${s.profit>=0?'+':''}${s.profit.toFixed(2)}</td>
+        <td class="${s.yld>=0?'pl-pos':'pl-neg'}">${s.yld>=0?'+':''}${s.yld.toFixed(1)}%</td></tr>`).join("")}
+    </table></div>`;
+
+  // racha actual
+  let streak=0; const lastRes=settled[settled.length-1].result;
+  for(let i=settled.length-1;i>=0;i--){ if(settled[i].result===lastRes) streak++; else break; }
+  const streakTxt=`${streak} ${lastRes==="won"?"✅ ganada(s)":"❌ perdida(s)"} seguidas`;
+
+  // curva de beneficio acumulado (unidades)
+  let cum=0; const pts=settled.map(r=>{ cum+=pnl(r); return cum; });
+
+  box.innerHTML=`
+    <div class="adv-grid">
+      ${miniTable("Rendimiento por deporte", groupBy("sport"))}
+      ${miniTable("Rendimiento por confianza", groupBy("conf"))}
+    </div>
+    <div class="subcard">
+      <h3>Evolución del beneficio (u) · racha actual: ${streakTxt}</h3>
+      ${buildChart(pts)}
+    </div>`;
+}
+
+function buildChart(pts){
+  const W=600,H=140,pad=24;
+  if(pts.length===1) pts=[0,pts[0]];
+  const vals=[0,...pts]; const min=Math.min(...vals), max=Math.max(...vals);
+  const range=(max-min)||1;
+  const x=i=> pad + (i/(pts.length-1||1))*(W-2*pad);
+  const y=v=> H-pad - ((v-min)/range)*(H-2*pad);
+  const line=pts.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const zeroY=y(0).toFixed(1);
+  const col=pts[pts.length-1]>=0?"#2bd4a4":"#ff5470";
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="140" preserveAspectRatio="none" style="display:block">
+    <line x1="${pad}" y1="${zeroY}" x2="${W-pad}" y2="${zeroY}" stroke="#39435a" stroke-dasharray="4 4"/>
+    <polyline fill="none" stroke="${col}" stroke-width="2" points="${line}"/>
+  </svg>`;
+}
+
+// ----- auto-liquidado con The Odds API /scores -----
+function settlePick(r, ev){
+  const get=name=>{ const s=(ev.scores||[]).find(x=>x.name===name); return s?Number(s.score):null; };
+  const hs=get(ev.home_team), as=get(ev.away_team);
+  if(hs==null||as==null||isNaN(hs)||isNaN(as)) return null;
+  const mk=r.mercado||"", sel=r.seleccion||"";
+  if(/totales/i.test(mk)){
+    const m=sel.match(/(Over|Under)\s+([\d.]+)/i); if(!m) return null;
+    const tot=hs+as, line=parseFloat(m[2]);
+    if(tot===line) return "void";
+    return (/over/i.test(m[1])? tot>line : tot<line) ? "won" : "lost";
+  }
+  if(/hándicap|handicap/i.test(mk)){
+    const m=sel.match(/^(.*)\s([+-][\d.]+)$/); if(!m) return null;
+    const team=m[1].trim(), pt=parseFloat(m[2]);
+    const ts = team===ev.home_team?hs : team===ev.away_team?as : null;
+    const os = team===ev.home_team?as : team===ev.away_team?hs : null;
+    if(ts==null) return null;
+    const d=(ts+pt)-os; return d===0?"void":(d>0?"won":"lost");
+  }
+  // h2h / moneyline / 1X2
+  if(/^draw$|^empate$/i.test(sel)) return hs===as?"won":"lost";
+  if(sel===ev.home_team) return hs>as?"won":"lost";
+  if(sel===ev.away_team) return as>hs?"won":"lost";
+  return null; // nombre no reconocido → no liquidar
+}
+
+async function autoSettle(){
+  const h=histLoad();
+  const pend=h.filter(r=>r.result==="pending" && r.sportKey && r.home && r.away);
+  if(!pend.length){ $("histMsg").textContent="No hay pendientes con datos para auto-liquidar (los picks antiguos no tienen sport_key)."; return; }
+  // resolver modo (igual que el escáner)
+  const backend=$("backendUrl").value.trim().replace(/\/+$/,""), appToken=$("appToken").value.trim(), key=$("apiKey").value.trim();
+  let km;
+  if(backend){ API_BASE=backend; REQ_HEADERS=appToken?{"x-app-token":appToken}:{}; km=""; }
+  else { if(!key){ $("histMsg").textContent="Pega tu API key en la pestaña Escáner para auto-liquidar."; return; }
+         API_BASE=DIRECT_BASE; REQ_HEADERS={}; km=`apiKey=${key}`; }
+
+  const keys=[...new Set(pend.map(r=>r.sportKey))];
+  $("histSettleBtn").disabled=true; $("histMsg").textContent="Consultando resultados en The Odds API…";
+  let done=0, miss=0;
+  for(const sk of keys){
+    let scores;
+    try{ scores=await apiGet(`/sports/${sk}/scores/?${km}&daysFrom=3`); }
+    catch(e){ $("histMsg").textContent="Error en /scores: "+e.message; $("histSettleBtn").disabled=false; return; }
+    const completed=(scores||[]).filter(s=>s.completed && s.scores);
+    for(const r of pend.filter(p=>p.sportKey===sk)){
+      const ev=completed.find(e=>e.home_team===r.home && e.away_team===r.away);
+      if(!ev){ miss++; continue; }
+      const res=settlePick(r,ev);
+      if(res){ const rec=h.find(x=>x.id===r.id); rec.result=res; done++; } else miss++;
+    }
+  }
+  histSave(h); renderHistory();
+  $("histSettleBtn").disabled=false;
+  $("histMsg").textContent=`✓ ${done} pick(s) liquidados automáticamente. ${miss} sin resultado todavía (en juego, o partido > 3 días, o tenis).`;
+}
+
 function showTab(which){
   const e=which==="escaner";
   $("tab-escaner").classList.toggle("hidden",!e);
@@ -761,6 +890,7 @@ $("tabBtnHistorial").addEventListener("click",()=>showTab("historial"));
 $("saveHistBtn").addEventListener("click",addPicksToHistory);
 $("histSport").addEventListener("change",renderHistory);
 $("histResultFilter").addEventListener("change",renderHistory);
+$("histSettleBtn").addEventListener("click",autoSettle);
 $("histExportBtn").addEventListener("click",histExportCSV);
 $("histClearBtn").addEventListener("click",()=>{ if(confirm("¿Vaciar todo el historial? No se puede deshacer.")){ histSave([]); renderHistory(); } });
 $("startBtn").addEventListener("click",run);
