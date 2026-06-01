@@ -48,6 +48,11 @@
   .c-MEDIA{background:rgba(245,166,35,.15);color:var(--mid)}
   .c-BAJA{background:rgba(255,84,112,.15);color:var(--low)}
   .confwhy{color:var(--muted);font-size:10.5px;margin-top:4px;line-height:1.3}
+  .tabs{display:flex;gap:8px;margin-bottom:18px}
+  .tab{background:var(--panel);border:1px solid var(--border);color:var(--muted);padding:9px 18px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600}
+  .tab.active{background:var(--accent);color:#04121f;border-color:var(--accent)}
+  .res-sel{background:var(--panel2);border:1px solid var(--border);color:var(--txt);border-radius:6px;padding:4px 6px;font-size:12px}
+  .pl-pos{color:var(--good);font-weight:700}.pl-neg{color:var(--bad);font-weight:700}
   .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
   .stat{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
   .stat b{display:block;font-size:22px;font-weight:700}
@@ -73,6 +78,14 @@
 </header>
 
 <div class="wrap">
+
+  <!-- ====== TABS ====== -->
+  <div class="tabs">
+    <button class="tab active" id="tabBtnEscaner">🔎 Escáner</button>
+    <button class="tab" id="tabBtnHistorial">📈 Historial</button>
+  </div>
+
+  <div id="tab-escaner">
 
   <!-- ====== CONFIG ====== -->
   <div class="card" id="configCard">
@@ -174,6 +187,40 @@
     </div>
     <div class="omit" id="omitBox"></div>
     <div class="disclaimer">Una cuota con value indica una ventaja estadística a largo plazo, no una predicción del resultado de un partido concreto. La columna Prob % es el consenso de mercado libre de margen (de-vig). Gestiona el bankroll con disciplina.</div>
+    <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn" id="saveHistBtn">💾 Guardar picks en historial</button>
+      <span class="hint" id="saveHistMsg"></span>
+    </div>
+  </div>
+
+  </div><!-- /tab-escaner -->
+
+  <!-- ====== HISTORIAL ====== -->
+  <div id="tab-historial" class="hidden">
+    <div class="card">
+      <h2>Historial de picks · estadísticas</h2>
+      <div class="summary" id="histSummary"></div>
+      <div class="row" style="margin:6px 0 14px;align-items:flex-end">
+        <div><label>Deporte</label><select id="histSport"><option value="">Todos</option></select></div>
+        <div><label>Estado</label><select id="histResultFilter">
+          <option value="">Todos</option><option value="pending">Pendientes</option>
+          <option value="settled">Liquidadas</option><option value="won">Ganadas</option>
+          <option value="lost">Perdidas</option><option value="void">Nulas</option></select></div>
+        <button class="btn ghost" id="histExportBtn">Exportar CSV</button>
+        <button class="btn ghost" id="histClearBtn">Vaciar historial</button>
+      </div>
+      <div style="overflow:auto">
+        <table id="histTable">
+          <thead><tr>
+            <th>Fecha</th><th>Deporte / Liga</th><th>Partido</th><th>Mercado</th>
+            <th>Selección</th><th class="num">Cuota</th><th class="num">Prob %</th>
+            <th class="num">EV%</th><th>Conf.</th><th>Resultado</th><th class="num">P&amp;L (u)</th>
+          </tr></thead>
+          <tbody id="histBody"></tbody>
+        </table>
+      </div>
+      <div class="disclaimer">Yield y % de acierto se calculan con stake plano de <b>1 unidad</b> por pick liquidado (las Nulas no cuentan). Marca el resultado de cada pick para alimentar las estadísticas. Los datos se guardan solo en este navegador (localStorage); usa «Exportar CSV» para respaldarlos.</div>
+    </div>
   </div>
 
 </div>
@@ -544,6 +591,8 @@ async function run(){
 
     // ---- FASE 5: salida ----
     allPicks.sort((a,b)=>b.prob-a.prob);
+    lastScanPicks=allPicks;            // disponible para «Guardar en historial»
+    $("saveHistMsg").textContent="";
     renderResults(allPicks, {scanned,omitted,nEvents,nPicks:allPicks.length,credits});
     setProg(100); setStatus("Completado.");
     log(`FASE 5 · ${allPicks.length} value pick(s) sobre ${nEvents} partido(s).`,"log-ok");
@@ -604,7 +653,116 @@ function renderResults(picks, meta){
   ob.innerHTML=html;
 }
 
+// ============================================================
+//  HISTORIAL (localStorage) — % acierto, yield, P&L
+// ============================================================
+let lastScanPicks=[];
+const HKEY="oddsHistory_v1";
+const RES_LBL={pending:"Pendiente",won:"Ganada",lost:"Perdida",void:"Nula"};
+
+function histLoad(){ try{ return JSON.parse(safeStore.get(HKEY)||"[]"); }catch(e){ return []; } }
+function histSave(arr){ safeStore.set(HKEY, JSON.stringify(arr)); }
+function pickKey(p,date){ return `${date}|${p.match}|${p.mercado}|${p.seleccion}`; }
+function pnl(r){ if(r.result==="won") return r.odds-1; if(r.result==="lost") return -1; return 0; } // stake plano 1u
+
+function addPicksToHistory(){
+  if(!lastScanPicks.length){ $("saveHistMsg").textContent="No hay picks que guardar (haz un escaneo primero)."; return; }
+  const h=histLoad(); const existing=new Set(h.map(r=>r.key)); const date=TODAY; let added=0;
+  for(const p of lastScanPicks){
+    const key=pickKey(p,date);
+    if(existing.has(key)) continue;
+    h.push({ id:(Date.now().toString(36)+Math.random().toString(36).slice(2,7)),
+      key, date, savedAt:new Date().toISOString(),
+      sport:p.sport, league:p.league, match:p.match, time:p.time,
+      mercado:p.mercado, seleccion:p.seleccion, odds:+p.bestOdds.toFixed(2), book:p.bestBook,
+      prob:+p.prob.toFixed(1), EV:+p.EV.toFixed(2), conf:p.conf, result:"pending" });
+    added++; existing.add(key);
+  }
+  histSave(h);
+  $("saveHistMsg").textContent=`✓ ${added} pick(s) añadidos (${lastScanPicks.length-added} ya estaban en el historial).`;
+}
+
+function setResult(id,res){ const h=histLoad(); const r=h.find(x=>x.id===id); if(r){ r.result=res; histSave(h); renderHistory(); } }
+
+function renderHistory(){
+  const h=histLoad();
+  // filtro de deportes
+  const sports=[...new Set(h.map(r=>r.sport))].sort();
+  const selSport=$("histSport"); const cur=selSport.value;
+  selSport.innerHTML=`<option value="">Todos</option>`+sports.map(s=>`<option ${s===cur?"selected":""}>${s}</option>`).join("");
+  const fSport=selSport.value, fRes=$("histResultFilter").value;
+
+  // estadísticas (sobre TODO el historial)
+  const settled=h.filter(r=>r.result==="won"||r.result==="lost");
+  const won=h.filter(r=>r.result==="won").length;
+  const lost=h.filter(r=>r.result==="lost").length;
+  const pend=h.filter(r=>r.result==="pending").length;
+  const staked=settled.length; const profit=settled.reduce((a,r)=>a+pnl(r),0);
+  const hit= settled.length? won/settled.length*100 : 0;
+  const yld= staked? profit/staked*100 : 0;
+  $("histSummary").innerHTML=`
+    <div class="stat"><b>${h.length}</b><span>Picks totales</span></div>
+    <div class="stat"><b>${pend}</b><span>Pendientes</span></div>
+    <div class="stat"><b>${settled.length}</b><span>Liquidadas</span></div>
+    <div class="stat"><b>${hit.toFixed(1)}%</b><span>% Acierto (${won}-${lost})</span></div>
+    <div class="stat"><b class="${profit>=0?'pl-pos':'pl-neg'}">${profit>=0?'+':''}${profit.toFixed(2)} u</b><span>Beneficio (1u plano)</span></div>
+    <div class="stat"><b class="${yld>=0?'pl-pos':'pl-neg'}">${yld>=0?'+':''}${yld.toFixed(2)}%</b><span>Yield</span></div>`;
+
+  // tabla (aplicando filtros)
+  let rows=h.slice().sort((a,b)=>(b.savedAt||"").localeCompare(a.savedAt||""));
+  if(fSport) rows=rows.filter(r=>r.sport===fSport);
+  if(fRes==="settled") rows=rows.filter(r=>r.result==="won"||r.result==="lost");
+  else if(fRes) rows=rows.filter(r=>r.result===fRes);
+
+  const tb=$("histBody"); tb.innerHTML="";
+  if(rows.length===0){ tb.innerHTML=`<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:22px">Sin picks en el historial. Haz un escaneo y pulsa «Guardar picks en historial».</td></tr>`; return; }
+  for(const r of rows){
+    const p=pnl(r); const isSettled=(r.result==="won"||r.result==="lost");
+    const opts=["pending","won","lost","void"].map(v=>`<option value="${v}" ${r.result===v?"selected":""}>${RES_LBL[v]}</option>`).join("");
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td style="font-size:11px">${r.date}</td>
+      <td>${r.sport}<div style="color:var(--muted);font-size:11px">${r.league}</div></td>
+      <td style="font-size:12px">${r.match}</td>
+      <td style="font-size:12px">${r.mercado}</td>
+      <td><b>${r.seleccion}</b></td>
+      <td class="num">${r.odds.toFixed(2)}</td>
+      <td class="num">${r.prob.toFixed(1)}%</td>
+      <td class="num">+${r.EV.toFixed(2)}%</td>
+      <td><span class="chip c-${r.conf}">${r.conf}</span></td>
+      <td><select class="res-sel" data-id="${r.id}">${opts}</select></td>
+      <td class="num ${isSettled?(p>=0?'pl-pos':'pl-neg'):''}">${isSettled?(p>=0?'+':'')+p.toFixed(2):'—'}</td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll(".res-sel").forEach(s=>s.addEventListener("change",e=>setResult(e.target.dataset.id, e.target.value)));
+}
+
+function histExportCSV(){
+  const h=histLoad(); if(!h.length) return;
+  const cols=["date","sport","league","match","mercado","seleccion","odds","book","prob","EV","conf","result"];
+  const esc=v=>{ v=String(v??"").replace(/"/g,'""'); return /[",\n]/.test(v)?`"${v}"`:v; };
+  const lines=[cols.join(",")].concat(h.map(r=>cols.map(c=>esc(r[c])).join(",")));
+  const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`historial_picks_${TODAY}.csv`; a.click();
+}
+
+function showTab(which){
+  const e=which==="escaner";
+  $("tab-escaner").classList.toggle("hidden",!e);
+  $("tab-historial").classList.toggle("hidden",e);
+  $("tabBtnEscaner").classList.toggle("active",e);
+  $("tabBtnHistorial").classList.toggle("active",!e);
+  if(!e) renderHistory();
+}
+
 // ---------- eventos UI ----------
+$("tabBtnEscaner").addEventListener("click",()=>showTab("escaner"));
+$("tabBtnHistorial").addEventListener("click",()=>showTab("historial"));
+$("saveHistBtn").addEventListener("click",addPicksToHistory);
+$("histSport").addEventListener("change",renderHistory);
+$("histResultFilter").addEventListener("change",renderHistory);
+$("histExportBtn").addEventListener("click",histExportCSV);
+$("histClearBtn").addEventListener("click",()=>{ if(confirm("¿Vaciar todo el historial? No se puede deshacer.")){ histSave([]); renderHistory(); } });
 $("startBtn").addEventListener("click",run);
 $("resetBtn").addEventListener("click",()=>{
   clearLog(); logEl.textContent="Listo. Introduce tu API key y pulsa «Comenzar».";
