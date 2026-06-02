@@ -157,6 +157,7 @@
           <span class="checkline"><input type="checkbox" id="ponderarSharp" checked> Pinnacle ×2</span>
           <span class="checkline"><input type="checkbox" id="onlyToday" checked> solo HOY (UTC-5)</span>
           <span class="checkline"><input type="checkbox" id="prematchOnly" checked> solo pre-partido (descartar en vivo)</span>
+          <span class="checkline"><input type="checkbox" id="strictMode" checked> modo estricto (ancla sharp + de-vig potencia)</span>
         </div>
       </div>
       <div>
@@ -367,22 +368,42 @@ function madInfo(arr){
   return {med,mad};
 }
 
+// Libros sharp de referencia (líneas afiladas; mercado las sigue)
+const SHARPS=/pinnacle|circa|matchbook|smarkets|betfair/i;
+
+// De-vig por método de POTENCIA: halla k tal que Σ (1/odds)^k = 1.
+// Reparte el margen de forma más realista que el proporcional (corrige el sesgo
+// favorito-longshot). Devuelve probabilidades justas normalizadas.
+function devigPower(implied){
+  const sum=implied.reduce((a,b)=>a+b,0);
+  if(!(sum>1)) return implied.map(r=>r/sum);            // sin overround → proporcional
+  const f=k=>implied.reduce((a,r)=>a+Math.pow(r,k),0);
+  let lo=1, hi=1, guard=0;
+  while(f(hi)>1 && guard++<80) hi*=1.5;                 // sube hi hasta que Σ<1
+  for(let i=0;i<80;i++){ const m=(lo+hi)/2; if(f(m)>1) lo=m; else hi=m; }
+  const k=(lo+hi)/2, fr=implied.map(r=>Math.pow(r,k)), s=fr.reduce((a,b)=>a+b,0);
+  return fr.map(x=>x/s);
+}
+// Exigencia extra de EV según liquidez (pocas casas ⇒ más ruido ⇒ más EV requerido)
+function liquidityBump(nBooks){ return nBooks<5?4 : (nBooks<8?1.5 : 0); }
+
 // Procesa un evento → devuelve array de selecciones con consenso, mejor cuota, EV, etc.
 function processEvent(ev, cfg){
-  // mapa: selKey -> { meta, books:[{book,odds,fairProb}] }
+  const strict = cfg.strict!==false;
+  const hoursToStart=(new Date(ev.commence_time).getTime()-Date.now())/3.6e6;
+
+  // mapa: selKey -> { meta, books:[{book,odds,fairProb,sharp}] }
   const sel={};
   for(const bm of ev.bookmakers){
     for(const mk of bm.markets){
       if(!cfg.markets.includes(mk.key)) continue;
       for(const g of groupOutcomes(mk)){
-        const sumImplied=g.outcomes.reduce((a,o)=>a+1/o.price,0);
-        // Una cuota centinela (mercado suspendido, p.ej. 1001) hunde la suma de prob.
-        // implícitas muy por debajo de 1 (~0.5-0.6) y distorsiona TODO el de-vig de esa
-        // casa en el grupo. Una línea simplemente blanda (value real) baja la suma solo a
-        // ~0.92-0.99, así que NO la tocamos. Umbral 0.92 separa error de value legítimo.
-        if(!isFinite(sumImplied) || sumImplied<0.92 || sumImplied>1.40) continue;
-        for(const o of g.outcomes){
-          const fairProb=(1/o.price)/sumImplied;
+        const implied=g.outcomes.map(o=>1/o.price);
+        const sumImplied=implied.reduce((a,b)=>a+b,0);
+        if(!isFinite(sumImplied) || sumImplied<0.92) continue;       // centinela / suspendido
+        if(sumImplied > (strict?1.15:1.40)) continue;                // vig excesivo (recreativa)
+        const fairs = strict ? devigPower(implied) : implied.map(r=>r/sumImplied);
+        g.outcomes.forEach((o,i)=>{
           const key=`${mk.key}|${g.lineId}|${o.name}|${o.point??""}`;
           if(!sel[key]) sel[key]={
             marketKey:mk.key, lineId:g.lineId,
@@ -390,8 +411,8 @@ function processEvent(ev, cfg){
             seleccion:selectionLabel(mk.key,o),
             books:[]
           };
-          sel[key].books.push({book:bm.title, odds:o.price, fairProb});
-        }
+          sel[key].books.push({book:bm.title, odds:o.price, fairProb:fairs[i], sharp:SHARPS.test(bm.title)});
+        });
       }
     }
   }
@@ -417,59 +438,83 @@ function processEvent(ev, cfg){
       if(kept.length>=3){ books=kept; excluded=ex; } // nunca vaciar el grupo
     }
 
-    // --- consenso ponderado (Pinnacle ×2), solo casas válidas ---
-    let wSum=0, pSum=0;
-    for(const b of books){
-      const w=(cfg.ponderarSharp && /pinnacle/i.test(b.book))?2:1;
-      wSum+=w; pSum+=w*b.fairProb;
-    }
-    const consensus=pSum/wSum;
-    const fairOdds=1/consensus;
-
     // --- mejor cuota: SOLO entre casas válidas (no las descartadas por error de línea) ---
     let best=books[0];
     for(const b of books) if(b.odds>best.odds) best=b;
-    // ¿había una cuota más alta en una casa descartada? → bandera de error de línea
     let bestAll=s.books[0];
     for(const b of s.books) if(b.odds>bestAll.odds) bestAll=b;
-    const lineErrorFlag = bestAll.odds>best.odds*1.5; // alguien cotiza muy por encima → sospechoso
+    const lineErrorFlag = bestAll.odds>best.odds*1.5;
+
+    // --- línea justa de referencia sharp (Pinnacle/exchanges) ---
+    const sharpBooks=books.filter(b=>b.sharp);
+    const sharpFair = sharpBooks.length ? sharpBooks.reduce((a,b)=>a+b.fairProb,0)/sharpBooks.length : null;
+
+    // --- consenso de mercado ---
+    let consensus;
+    if(strict){
+      // resto del mercado EXCLUYENDO la casa que ofrece el precio (enfoque CLV)
+      let mkt=books.filter(b=>b.book!==best.book);
+      if(mkt.length<3) mkt=books.slice();
+      // media recortada: quita el extremo alto y bajo
+      let probs=mkt.map(b=>b.fairProb).sort((a,b)=>a-b);
+      if(probs.length>=5) probs=probs.slice(1,-1);
+      const marketFair=probs.reduce((a,b)=>a+b,0)/probs.length;
+      // anclar en sharp si existe (blend 70/30); si no, mercado robusto
+      consensus = sharpFair!=null ? 0.7*sharpFair + 0.3*marketFair : marketFair;
+    } else {
+      let wSum=0,pSum=0;
+      for(const b of books){ const w=(cfg.ponderarSharp && /pinnacle/i.test(b.book))?2:1; wSum+=w; pSum+=w*b.fairProb; }
+      consensus=pSum/wSum;
+    }
+    const fairOdds=1/consensus;
 
     // --- Fase 3: EV y Edge ---
     const EV=(best.odds*consensus-1)*100;
     const Edge=(best.odds/fairOdds-1)*100;
+    const evVsSharp = sharpFair!=null ? (best.odds*sharpFair-1)*100 : null;
+
+    // GATE estricto: no apostar contra la línea sharp (Pinnacle dice -EV) → descartar
+    if(strict && evVsSharp!=null && evVsSharp<0) continue;
+
+    // umbral EV efectivo por liquidez (se aplica en el filtro de run())
+    const minEV = +(cfg.umbralEV + (strict?liquidityBump(nBooks):0)).toFixed(2);
 
     // --- Fase 4: confianza + motivo ---
     const probsKept=books.map(b=>b.fairProb);
     const disp=stats(probsKept);
-    const cv = disp.mean>0 ? disp.std/disp.mean : 1; // coef. de variación
+    const cv = disp.mean>0 ? disp.std/disp.mean : 1;
     const dispPct=(cv*100).toFixed(1);
     const nExcl=excluded.length;
     let conf;
-    if(nBooks<5) conf="BAJA";
-    else if(nBooks>=7 && cv<0.07 && EV<25) conf="ALTA";
-    else conf="MEDIA";
-    if(lineErrorFlag && conf==="ALTA") conf="MEDIA"; // cautela: mercado disperso
-    if(EV>cfg.maxEV) conf="BAJA"; // EV exagerado ⇒ casi siempre error de línea
+    if(strict){
+      const altaOK = sharpFair!=null && nBooks>=7 && cv<0.06 && !lineErrorFlag && EV<=20 && hoursToStart<=cfg.maxHoursAlta;
+      if(nBooks<5) conf="BAJA"; else if(altaOK) conf="ALTA"; else conf="MEDIA";
+    } else {
+      if(nBooks<5) conf="BAJA"; else if(nBooks>=7 && cv<0.07 && EV<25) conf="ALTA"; else conf="MEDIA";
+      if(lineErrorFlag && conf==="ALTA") conf="MEDIA";
+    }
+    if(EV>cfg.maxEV) conf="BAJA";
 
-    // motivo legible de la confianza asignada
+    // motivo legible
     let confReason;
     if(EV>cfg.maxEV){
       confReason=`EV de ${EV.toFixed(0)}% excede el tope: casi seguro error de línea.`;
     } else if(conf==="BAJA"){
       const r=[];
-      if(nBooks<5) r.push(`solo ${nBooks} casa(s) cotizan esta línea (<5 ⇒ ruidoso)`);
-      if(cv>=0.12) r.push(`dispersión alta entre casas (${dispPct}%)`);
-      if(lineErrorFlag) r.push(`una casa cotiza muy por encima del resto`);
+      if(nBooks<5) r.push(`solo ${nBooks} casa(s) cotizan (<5 ⇒ ruidoso)`);
+      if(cv>=0.12) r.push(`dispersión alta (${dispPct}%)`);
+      if(lineErrorFlag) r.push(`una casa muy por encima del resto`);
       confReason=(r.length?r.join("; "):`consenso poco fiable`)+".";
     } else if(conf==="ALTA"){
-      confReason=`${nBooks} casas, baja dispersión (${dispPct}%) y EV contenido${nExcl?`; ${nExcl} outlier(s) excluido(s)`:""}.`;
+      confReason=`${nBooks} casas`+(evVsSharp!=null?`, Pinnacle confirma ${evVsSharp>=0?'+':''}${evVsSharp.toFixed(1)}% EV`:"")+`, dispersión ${dispPct}%, empieza en ${hoursToStart.toFixed(0)}h.`;
     } else { // MEDIA
       const r=[];
-      if(nBooks<7) r.push(`${nBooks} casas (consenso medio)`);
-      if(cv>=0.07) r.push(`dispersión moderada (${dispPct}%)`);
-      if(EV>=25) r.push(`EV alto (${EV.toFixed(0)}%) a vigilar`);
-      if(lineErrorFlag) r.push(`una casa muy por encima del resto`);
-      if(nExcl) r.push(`${nExcl} outlier(s) excluido(s) del consenso`);
+      if(strict && sharpFair==null) r.push(`sin línea sharp de referencia`);
+      if(nBooks<7) r.push(`${nBooks} casas`);
+      if(cv>=0.06) r.push(`dispersión ${dispPct}%`);
+      if(evVsSharp!=null && evVsSharp<cfg.umbralEV) r.push(`margen ajustado vs Pinnacle (${evVsSharp.toFixed(1)}%)`);
+      if(strict && hoursToStart>cfg.maxHoursAlta) r.push(`línea temprana (${hoursToStart.toFixed(0)}h)`);
+      if(nExcl) r.push(`${nExcl} outlier(s) excluido(s)`);
       confReason=(r.length?r.join("; "):`consenso aceptable`)+".";
     }
 
@@ -487,7 +532,7 @@ function processEvent(ev, cfg){
       mercado:s.mercado, seleccion:s.seleccion,
       bestOdds:best.odds, bestBook:best.book,
       prob:consensus*100, fairOdds, EV, Edge, conf, confReason,
-      nBooks, stakePct, stakeAmt
+      nBooks, stakePct, stakeAmt, minEV
     });
   }
   return out;
@@ -533,7 +578,9 @@ async function run(){
     maxCalls:parseInt($("maxCalls").value)||30,
     ponderarSharp:$("ponderarSharp").checked,
     onlyToday:$("onlyToday").checked,
-    prematchOnly:$("prematchOnly").checked
+    prematchOnly:$("prematchOnly").checked,
+    strict:$("strictMode").checked,
+    maxHoursAlta:48   // líneas a más de 48h del inicio no pueden ser confianza ALTA
   };
 
   $("startBtn").disabled=true; $("resetBtn").disabled=true;
@@ -600,7 +647,7 @@ async function run(){
       for(const ev of events){
         ev._sportTitle=sp.group; ev._leagueTitle=sp.title; ev._sportKey=sp.key;
         nEvents++;
-        const picks=processEvent(ev,cfg).filter(p=>p.EV>=cfg.umbralEV && p.EV<=cfg.maxEV && p.prob>=cfg.minProb && isFinite(p.EV));
+        const picks=processEvent(ev,cfg).filter(p=>p.EV>=(p.minEV??cfg.umbralEV) && p.EV<=cfg.maxEV && p.prob>=cfg.minProb && isFinite(p.EV));
         allPicks=allPicks.concat(picks);
       }
     }
