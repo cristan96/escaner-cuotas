@@ -156,6 +156,7 @@
         <div style="display:flex;gap:14px;padding-top:6px;flex-wrap:wrap">
           <span class="checkline"><input type="checkbox" id="ponderarSharp" checked> Pinnacle ×2</span>
           <span class="checkline"><input type="checkbox" id="onlyToday" checked> solo HOY (UTC-5)</span>
+          <span class="checkline"><input type="checkbox" id="prematchOnly" checked> solo pre-partido (descartar en vivo)</span>
         </div>
       </div>
       <div>
@@ -531,7 +532,8 @@ async function run(){
     bankroll:parseFloat($("bankroll").value)||1000,
     maxCalls:parseInt($("maxCalls").value)||30,
     ponderarSharp:$("ponderarSharp").checked,
-    onlyToday:$("onlyToday").checked
+    onlyToday:$("onlyToday").checked,
+    prematchOnly:$("prematchOnly").checked
   };
 
   $("startBtn").disabled=true; $("resetBtn").disabled=true;
@@ -580,9 +582,17 @@ async function run(){
       }
       // Fase 1.2: filtrar por HOY (UTC-5)
       let events = cfg.onlyToday ? data.filter(ev=>ymdInTZ(new Date(ev.commence_time))===TODAY) : data;
+      // Fase 1.3: SOLO pre-partido → descartar partidos en vivo / ya empezados
+      if(cfg.prematchOnly){
+        const nowMs=Date.now();
+        const before=events.length;
+        events=events.filter(ev=>new Date(ev.commence_time).getTime() > nowMs);
+        const live=before-events.length;
+        if(live>0) log(`  · ${sp.title}: ${live} partido(s) en vivo/empezados descartados.`,"log-dim");
+      }
       if(events.length===0){
-        log(`  – ${sp.title}: sin partidos hoy → descartado.`,"log-dim");
-        omitted.push(`${sp.title}: sin partidos hoy`); continue;
+        log(`  – ${sp.title}: sin partidos pre-partido hoy → descartado.`,"log-dim");
+        omitted.push(`${sp.title}: sin partidos pre-partido hoy`); continue;
       }
       scanned.push(`${sp.title} (${events.length})`);
       log(`  ✓ ${sp.title}: ${events.length} partido(s) hoy.`,"log-ok");
