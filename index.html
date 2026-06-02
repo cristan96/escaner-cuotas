@@ -61,6 +61,9 @@
   .mini th,.mini td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:right}
   .mini th:first-child,.mini td:first-child{text-align:left}
   .mini th{color:var(--muted);font-size:10px;text-transform:uppercase}
+  .detailrow td{background:#0a0d14;border-bottom:1px solid var(--border)}
+  .detailrow.hidden{display:none}
+  .pickrow .expcell{font-weight:700}
   .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
   .stat{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
   .stat b{display:block;font-size:22px;font-weight:700}
@@ -158,6 +161,10 @@
           <span class="checkline"><input type="checkbox" id="onlyToday" checked> solo HOY (UTC-5)</span>
           <span class="checkline"><input type="checkbox" id="prematchOnly" checked> solo pre-partido (descartar en vivo)</span>
           <span class="checkline"><input type="checkbox" id="strictMode" checked> modo estricto (ancla sharp + de-vig potencia)</span>
+          <span class="checkline"><input type="checkbox" id="autoSave"> auto-guardar al historial</span>
+          <span class="checkline">Rango:&nbsp;<select id="daysAhead" style="width:auto;padding:4px 6px">
+            <option value="1" selected>Hoy</option><option value="2">Hoy + mañana</option>
+            <option value="3">3 días</option><option value="7">7 días</option></select></span>
         </div>
       </div>
       <div>
@@ -184,10 +191,17 @@
   <div class="card hidden" id="resultsCard">
     <h2>3 · Value Picks (orden Prob % ↓)</h2>
     <div class="summary" id="summary"></div>
+    <div class="row" id="pickFilters" style="margin:4px 0 12px;align-items:flex-end">
+      <div><label>Confianza</label><select id="fConf"><option value="">Todas</option><option value="ALTA">ALTA</option><option value="MEDIA">MEDIA</option><option value="BAJA">BAJA</option></select></div>
+      <div><label>Deporte</label><select id="fSport"><option value="">Todos</option></select></div>
+      <div><label>Ordenar por</label><select id="fSort"><option value="prob">Prob %</option><option value="EV">EV %</option><option value="Edge">Edge %</option><option value="stakePct">Stake</option></select></div>
+      <button class="btn ghost" id="pickExportBtn">Exportar CSV</button>
+      <span class="hint" id="pickCount"></span>
+    </div>
     <div style="overflow:auto">
       <table id="picksTable">
         <thead><tr>
-          <th>Deporte / Liga</th><th>Partido (hora local)</th><th>Mercado / Línea</th>
+          <th></th><th>Deporte / Liga</th><th>Partido (hora local)</th><th>Mercado / Línea</th>
           <th>Selección</th><th>Mejor cuota (casa)</th><th class="num">Prob %</th>
           <th class="num">Cuota justa</th><th class="num">EV%</th><th class="num">Edge%</th>
           <th>Confianza · Motivo</th><th class="num">Stake</th>
@@ -292,6 +306,12 @@ function localTimeStr(iso){
   return new Intl.DateTimeFormat("es-EC",{timeZone:TZ,hour:"2-digit",minute:"2-digit",hour12:false}).format(d)+" h";
 }
 const TODAY = ymdInTZ(new Date());
+// conjunto de fechas (YYYY-MM-DD en TZ) desde hoy hasta hoy+n-1
+function datesAhead(n){
+  const s=new Set(); const now=Date.now();
+  for(let i=0;i<n;i++) s.add(ymdInTZ(new Date(now+i*86400e3)));
+  return s;
+}
 
 // ---------- estado de cuota (headers de The Odds API) ----------
 let lastRemaining=null, lastUsed=null, lastCost=null;
@@ -532,7 +552,8 @@ function processEvent(ev, cfg){
       mercado:s.mercado, seleccion:s.seleccion,
       bestOdds:best.odds, bestBook:best.book,
       prob:consensus*100, fairOdds, EV, Edge, conf, confReason,
-      nBooks, stakePct, stakeAmt, minEV
+      nBooks, stakePct, stakeAmt, minEV,
+      booksOdds: s.books.slice().sort((a,b)=>b.odds-a.odds).map(b=>({book:b.book,odds:b.odds,sharp:b.sharp}))
     });
   }
   return out;
@@ -580,6 +601,8 @@ async function run(){
     onlyToday:$("onlyToday").checked,
     prematchOnly:$("prematchOnly").checked,
     strict:$("strictMode").checked,
+    autoSave:$("autoSave").checked,
+    daysAhead:parseInt($("daysAhead").value)||1,
     maxHoursAlta:48   // líneas a más de 48h del inicio no pueden ser confianza ALTA
   };
 
@@ -627,8 +650,12 @@ async function run(){
       }catch(e){
         log(`  ✗ ${sp.title}: ${e.message}`,"log-err"); omitted.push(`${sp.title}: error API`); continue;
       }
-      // Fase 1.2: filtrar por HOY (UTC-5)
-      let events = cfg.onlyToday ? data.filter(ev=>ymdInTZ(new Date(ev.commence_time))===TODAY) : data;
+      // Fase 1.2: filtrar por rango de días (UTC-5)
+      let events = data;
+      if(cfg.onlyToday){
+        const allowed=datesAhead(cfg.daysAhead);
+        events = data.filter(ev=>allowed.has(ymdInTZ(new Date(ev.commence_time))));
+      }
       // Fase 1.3: SOLO pre-partido → descartar partidos en vivo / ya empezados
       if(cfg.prematchOnly){
         const nowMs=Date.now();
@@ -663,6 +690,7 @@ async function run(){
     lastScanPicks=allPicks;            // disponible para «Guardar en historial»
     $("saveHistMsg").textContent="";
     renderResults(allPicks, {scanned,omitted,nEvents,nPicks:allPicks.length,credits});
+    if(cfg.autoSave && allPicks.length){ addPicksToHistory(); }   // auto-guardar al historial
     setProg(100); setStatus("Completado.");
     log(`FASE 5 · ${allPicks.length} value pick(s) sobre ${nEvents} partido(s).`,"log-ok");
     if(consumed!=null) log(`Créditos consumidos en este escaneo: ${consumed} · Restantes: ${lastRemaining??"?"}.`,"log-ok");
@@ -692,13 +720,37 @@ function renderResults(picks, meta){
     <div class="stat"><b>${crConsumed}</b><span>Créditos consumidos</span></div>
     <div class="stat"><b>${crRemaining}</b><span>Créditos restantes</span></div>`;
 
-  const tb=$("picksBody"); tb.innerHTML="";
-  if(picks.length===0){
-    tb.innerHTML=`<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Sin value picks que cumplan los filtros (EV ≥ ${$("umbralEV").value}% y Prob ≥ ${$("minProb").value}%) en los partidos de hoy.</td></tr>`;
+  currentScanPicks=picks; currentScanMeta=meta;
+  const sportsP=[...new Set(picks.map(p=>p.sport))].sort();
+  $("fSport").innerHTML=`<option value="">Todos</option>`+sportsP.map(s=>`<option>${s}</option>`).join("");
+  renderPicksTable();
+
+  const ob=$("omitBox");
+  let html=`<b>Resumen de ejecución</b> · Escaneados: ${meta.scanned.join(", ")||"ninguno"}.`;
+  if(meta.omitted.length){
+    html+=`<div style="margin-top:8px"><b>Omitidos:</b><br>`+
+          meta.omitted.map(o=>`<span>${o}</span>`).join("")+`</div>`;
   }
-  for(const p of picks){
-    const tr=document.createElement("tr");
+  ob.innerHTML=html;
+}
+
+// ----- tabla de picks con filtros, orden y comparador de casas -----
+let currentScanPicks=[], currentScanMeta=null;
+function renderPicksTable(){
+  const tb=$("picksBody"); tb.innerHTML="";
+  let rows=currentScanPicks.slice();
+  const fc=$("fConf").value, fs=$("fSport").value, sortK=$("fSort").value||"prob";
+  if(fc) rows=rows.filter(p=>p.conf===fc);
+  if(fs) rows=rows.filter(p=>p.sport===fs);
+  rows.sort((a,b)=>(b[sortK]||0)-(a[sortK]||0));
+  $("pickCount").textContent=`${rows.length} de ${currentScanPicks.length} picks`;
+  if(rows.length===0){
+    tb.innerHTML=`<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">Sin picks que cumplan el filtro.</td></tr>`; return;
+  }
+  for(const p of rows){
+    const tr=document.createElement("tr"); tr.className="pickrow";
     tr.innerHTML=`
+      <td class="expcell" style="text-align:center;cursor:pointer;color:var(--accent)">▸</td>
       <td>${p.sport}<div style="color:var(--muted);font-size:11px">${p.league}</div></td>
       <td>${p.match}<div style="color:var(--muted);font-size:11px">${p.time}</div></td>
       <td>${p.mercado}</td>
@@ -710,16 +762,33 @@ function renderResults(picks, meta){
       <td class="num">${p.Edge.toFixed(2)}%</td>
       <td style="max-width:230px"><span class="chip c-${p.conf}">${p.conf}</span><div class="confwhy" title="${p.confReason.replace(/"/g,'&quot;')}">${p.confReason}</div></td>
       <td class="num">${p.stakePct.toFixed(2)}%<div style="color:var(--muted);font-size:11px">${p.stakeAmt.toFixed(2)}</div></td>`;
-    tb.appendChild(tr);
+    const detail=document.createElement("tr"); detail.className="detailrow hidden";
+    detail.innerHTML=`<td colspan="12">${bookCompare(p)}</td>`;
+    tr.querySelector(".expcell").addEventListener("click",()=>{
+      detail.classList.toggle("hidden");
+      tr.querySelector(".expcell").textContent=detail.classList.contains("hidden")?"▸":"▾";
+    });
+    tb.appendChild(tr); tb.appendChild(detail);
   }
-
-  const ob=$("omitBox");
-  let html=`<b>Resumen de ejecución</b> · Escaneados: ${meta.scanned.join(", ")||"ninguno"}.`;
-  if(meta.omitted.length){
-    html+=`<div style="margin-top:8px"><b>Omitidos:</b><br>`+
-          meta.omitted.map(o=>`<span>${o}</span>`).join("")+`</div>`;
-  }
-  ob.innerHTML=html;
+}
+function bookCompare(p){
+  const bo=p.booksOdds||[];
+  if(!bo.length) return `<span style="color:var(--muted)">Sin desglose de casas.</span>`;
+  const cells=bo.map(b=>{
+    const isBest=b.book===p.bestBook;
+    const star=b.sharp?` <span style="color:var(--accent2)" title="libro sharp">★</span>`:"";
+    return `<span style="display:inline-block;margin:3px 6px;padding:4px 9px;border-radius:6px;background:${isBest?'rgba(43,212,164,.15)':'var(--panel)'};border:1px solid var(--border)">${b.book}${star}: <b style="${isBest?'color:var(--good)':''}">${b.odds.toFixed(2)}</b></span>`;
+  }).join("");
+  return `<div style="padding:6px 4px;font-size:12px">
+    <b>Comparador de casas</b> · ${bo.length} cotizando · cuota justa de consenso <b>${p.fairOdds.toFixed(2)}</b> · EV mín. exigido ${(p.minEV??0).toFixed(1)}% <span style="color:var(--muted)">(★ libro sharp · verde = mejor cuota)</span><br>${cells}</div>`;
+}
+function exportPicksCSV(){
+  if(!currentScanPicks.length) return;
+  const cols=["sport","league","match","time","mercado","seleccion","bestOdds","bestBook","prob","fairOdds","EV","Edge","conf","stakePct"];
+  const esc=v=>{ v=String(v??"").replace(/"/g,'""'); return /[",\n]/.test(v)?`"${v}"`:v; };
+  const lines=[cols.join(",")].concat(currentScanPicks.map(p=>cols.map(c=>esc(typeof p[c]==="number"?+(p[c].toFixed(4)):p[c])).join(",")));
+  const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`picks_${TODAY}.csv`; a.click();
 }
 
 // ============================================================
@@ -950,6 +1019,10 @@ $("histResultFilter").addEventListener("change",renderHistory);
 $("histSettleBtn").addEventListener("click",autoSettle);
 $("histExportBtn").addEventListener("click",histExportCSV);
 $("histClearBtn").addEventListener("click",()=>{ if(confirm("¿Vaciar todo el historial? No se puede deshacer.")){ histSave([]); renderHistory(); } });
+$("fConf").addEventListener("change",renderPicksTable);
+$("fSport").addEventListener("change",renderPicksTable);
+$("fSort").addEventListener("change",renderPicksTable);
+$("pickExportBtn").addEventListener("click",exportPicksCSV);
 $("startBtn").addEventListener("click",run);
 $("resetBtn").addEventListener("click",()=>{
   clearLog(); logEl.textContent="Listo. Introduce tu API key y pulsa «Comenzar».";
